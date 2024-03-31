@@ -10,7 +10,10 @@ cd ~/Desktop/dnsResults
 read -p "Target domain: " domain
 
 #get DNS server
-read -p "Desired DNS server: " server
+read -p "Desired DNS server (defaults to 1.1.1.1 if left blank):" server
+if [ -z $server ]; then
+	server=1.1.1.1
+fi
 
 #send stderr to file for rest of script
 exec 2>~/Desktop/dnsResults/error.log
