@@ -2,6 +2,14 @@
 
 #attempt at DNS report section automation
 
+#TODO add zone transfer checks at end
+#for i in $(cat NS_records);do dig axfr "$domain" @"$i" +short | sed "s/^; //;s/\.$//" >> testAxfrOutput;done
+#awk '{print $3, $1}' FS="," OFS="," NS_ips > testNsOutput
+#paste -d "," testNsOutput testAxfrOutput
+
+#TODO add DMARC check
+#dig -t TXT _dmarc."$domain" @"$server" +short
+
 #make a working directory
 mkdir -p ~/Desktop/dnsResults
 cd ~/Desktop/dnsResults
@@ -56,25 +64,25 @@ for type in $recordtypes; do
     cat ${type}_records
 done
 
-#print copy and pastable results to stdout for reporting
-echo ""
-echo "--------------------------------------"
-echo "copy and pastable results:"
-echo ""
+#print copy and pastable results to stdout and a file for reporting
+echo "" | tee -a dnsResults.out
+echo "--------------------------------------" | tee -a dnsResults.out
+echo "copy and pastable results:" | tee -a dnsResults.out
+echo "" | tee -a dnsResults.out
 
 for type in { A AAAA }; do
     if [ -s ${type}_records ]
     then
-        echo -n "\""
-        printf %s "$(< ${type}_records)"
-        echo "\"",$type,$domain
+        echo -n "\"" | tee -a dnsResults.out
+        printf %s "$(< ${type}_records)" | tee -a dnsResults.out
+        echo "\"",$type,$domain | tee -a dnsResults.out
     fi
 done
 
 for type in $hostnametypes; do
-    cat ${type}_ips
+    cat ${type}_ips | tee -a dnsResults.out
 done
 
-sed "s/^/,TXT,/" TXT_records
+sed "s/^/,TXT,/" TXT_records | tee -a dnsResults.out
 
-sed "s/^/,LOC,/" LOC_records
+sed "s/^/,LOC,/" LOC_records | tee -a dnsResults.out
