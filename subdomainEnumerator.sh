@@ -3,14 +3,14 @@
 #script to automate my process of enumerating subdomains for a target domain
 #requires curl jq xmlstarlet theHarvester spiderfoot recon-ng
 
-
+#TODO evaluate functionality for sub-sub domains ad infinitum
 #TODO make it possible to re-run one or more modules
 #TODO consider adding a manual brute-force module usings seclists
-#TODO consider adding some form of vhost enumeration, possibly off the main domain's A record
+#TODO consider adding some form of vhost enumeration, possibly off the main domain's A record (gobuster can do this)
 #TODO consider exploiting browser-based Censys results...
 #TODO consider adding a check for theharvester vs theHarvester
 #TODO consider also using amass tool https://0xpatrik.com/subdomain-takeover-candidates/
-#TODO consider adding a wildcard DNS check (super-bogus domain) maybe with option to continue or abort
+#TODO consider adding a wildcard DNS check (super-bogus domain) maybe with option to continue or abort (gobuster can do this)
 
 #could add shodan (prettyify json first might make it easier to find multiple matches that are otherwise on one line)
 #curl -O -i -X GET "https://api.shodan.io/shodan/host/${ip}?history=true&key={key}
@@ -46,7 +46,7 @@ echo "Found $numsubs subdomains from crt.sh"
 echo "--------------------------------"
 echo ""
 
-#censys API is no longer available free or automated
+#censys API is no longer available free
 ##query censys
 #echo "----------------------"
 #echo "Querying Censys API..."
@@ -54,19 +54,6 @@ echo ""
 #curl -sS -g -X "GET" "https://search.censys.io/api/v2/hosts/search?per_page=100&virtual_hosts=INCLUDE&q=$domain" -H "Accept: application/json" --user "<apiKey>" -o censys.out
 ##and format the results
 #grep -Po "\"name\":.*?," censys.out | grep -v "\"$domain\"" | grep "$domain" | sed "s/\"name\": \"//;s/\".*//" > censysSubdomains.lst
-
-#query binaryEdge
-echo "--------------------------"
-echo "Querying BinaryEdge API..."
-echo "--------------------------"
-curl -sS "https://api.binaryedge.io/v2/query/domains/subdomain/$domain" -H "X-Key:<key>" -o binaryedge.out
-#and format the results
-grep -o "events.*\]" binaryedge.out | sed "s/events\":\[\"//;s/\"\]//;s/\",\"/\n/g" | grep -v "^$domain\$" > binaryedgeSubdomains.lst
-numsubs=$(wc -l binaryedgeSubdomains.lst | sed "s/ binaryedgeSubdomains.lst//")
-echo "------------------------------------"
-echo "Found $numsubs subdomains from BinaryEdge"
-echo "------------------------------------"
-echo ""
 
 #query robtex
 echo "----------------------"
