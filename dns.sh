@@ -17,13 +17,14 @@ usage() {
 	echo "-d DOMAIN		target domain (required)"
 	echo "-h			print this help message, then exit"
 	echo "-n NAMESERVER		nameserver to query (defaults to 1.1.1.1)"
+	echo "-x			additionally check for zone transfer"
 	echo ""
 	echo "This script requires the dig and xclip packages"
 	exit 0
 }
 
 #parse arguments
-while getopts "d:n:h" opt;do
+while getopts "d:n:hx" opt;do
 	case $opt in
 		d )
 			domain="$OPTARG"
@@ -33,6 +34,9 @@ while getopts "d:n:h" opt;do
 			;;
 		h )
 			usage
+			;;
+		x )
+			zonecheck=true
 			;;
 		\? )
 			echo "Invalid option; exiting with status 1" >&2
@@ -61,7 +65,8 @@ mkdir -p "$workingDir"
 cd "$workingDir"
 
 #send stderr to file for rest of script
-exec 2>"$workingDir"/error.log
+: > error.log
+exec 2> error.log
 
 #use dig to query for each record type
 recordtypes='A AAAA SOA NS MX CNAME PTR TXT LOC'
@@ -117,9 +122,53 @@ for type in { TXT LOC };do
 	fi
 done
 
+#if selected, perform zone transfer checks using attackvm via SSH
+if [ $zonecheck == true ];then
+	#set ssh connection command and result files
+	attackvmConnect="ssh -J newVultr attackVM"
+	outputZoneFile=zoneTransfer.out
+	reportableZoneFile=zonePaste
+	: > $outputZoneFile
+	: > $reportableZoneFile
+	#perform zone transfer checks
+	for i in $(cat NS_records);do
+		eval "$attackvmConnect dig axfr @$i $domain" >> $outputZoneFile
+		#check if it worked
+		sed -n '$!d; /failed/q42' $outputZoneFile
+		sedexit="$?"
+		#if zone transfer failed
+		if [ $sedexit == 42 ];then
+			echo "\"${i}\",\"" >> $reportableZoneFile
+			printf %s "$(< $reportableZoneFile)" > $reportableZoneFile
+			dig @"${nameserver}" -t A "$i" +short | sort -u -t. -n -k1,1 -k2,2 -k3,3 -k4,4 >> $reportableZoneFile
+			dig @"${nameserver}" -t AAAA "$i" +short | sort -u -t: -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 -k6,6 -k7,7 -k8,8 >> $reportableZoneFile
+			printf %s "$(< $reportableZoneFile)" > $reportableZoneFile
+			echo "\",\"Failed\"" >> $reportableZoneFile
+		#if zone transfer succeeded
+		elif [ $sedexit == 0 ];then
+			echo "Zone Tranfer for $i succeeded! Results saved to $workingDir/$outputZoneFile"
+			echo "\"${i}\",\"" >> $reportableZoneFile
+			printf %s "$(< $reportableZoneFile)" > $reportableZoneFile
+			dig @"${nameserver}" -t A "$i" +short | sort -u -t. -n -k1,1 -k2,2 -k3,3 -k4,4 >> $reportableZoneFile
+			dig @"${nameserver}" -t AAAA "$i" +short | sort -u -t: -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 -k6,6 -k7,7 -k8,8 >> $reportableZoneFile
+			printf %s "$(< $reportableZoneFile)" > $reportableZoneFile
+			echo "\",\"Success\"" >> $reportableZoneFile
+		fi
+	done
+	#append results to output file
+	echo -e "\nzone transfer copy and pastable results:\n" >> $outputFile
+	cat $reportableZoneFile >> $outputFile
+fi
+
+#DMARC check
+: > demarcRecord
+dig -t TXT _dmarc."$domain" @"${nameserver}" +short > demarcRecord
+echo -e "\nDMARC record:\n" >> $outputFile
+cat demarcRecord >> $outputFile
+
 #let the user know we're done
 echo "CSV file of reportable results written to ${workingDir}/${outputFile}" 
 
 #be super-convenient
 tail -n +3 "$outputFile" | xclip -selection clipboard
-echo "Results have been copied to clipboard"
+echo "Results have also been copied to clipboard"
