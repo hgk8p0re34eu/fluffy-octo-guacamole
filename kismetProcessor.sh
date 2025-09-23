@@ -3,19 +3,23 @@
 #script to process a previously recorded kismetdb file for desired info
 
 #TODO consider adding support for a list of input files
-#TODO see if I can refine the stop the server section at the end
 #TODO consider refining usage with printf
 #TODO consider adding functionality to query for captured handshakes
 #https://www.kismetwireless.net/docs/api/wifi_dot11/#wpa-handshake
+#and maybe PMKIDs (/phy/phy80211/by-key/{DEVICEKEY}/pcap/handshake-pmkid.pcap)
 #curl -H 'Content-Type: application/json' -X GET \
 #http://kismet:kismet@localhost:2501/phy/phy80211/by-key/<apDeviceKey>/device/<clientMAC>/pcap/handshake.pcap -o <filename.pcap>
 #bonkers one-liner to do that for all clients in one AP:
 #i=1;apdevicekey="4202770D00000000_16935BA82A86";for clientmac in "18:B1:69:2A:08:AC" "C2:E8:76:34:9B:C0" "3C:06:30:35:D1:46" "76:98:AB:3E:43:FF" "86:36:F5:78:A8:12";do curl -H 'Content-Type: application/json' -X GET \
 #http://kismet:kismet@localhost:2501/phy/phy80211/by-key/"${apdevicekey}"/device/"${clientmac}"/pcap/handshake.pcap -o handshake"${i}".pcap;((i++));done
+#get a list of device base keys and client MACs for looking up handshakes:
+#curl -s -H 'Content-Type: application/json' -X POST  \
+#http://kismet:kismet@localhost:2501/devices/views/phydot11_accesspoints/devices.prettyjson \
+#-d '{"fields": ["kismet.device.base.macaddr", "dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.ssid", "dot11.device/dot11.device.num_associated_clients", "dot11.device/dot11.device.associated_client_map", "kismet.device.base.key"]}' \
+# | jq '.[] | select(.["dot11.device.num_associated_clients"] > 0) | .["kismet.device.base.key"],(.["dot11.device.associated_client_map"] | keys[])'
 
 #establish required packages
 requiredPackages=(
-	awk
 	curl
 	grep
 	jq
@@ -47,7 +51,7 @@ usage() {
 	echo "-n FILE		create and use a Kismet config file with credentials kismet:kismet (cannot be used with -c)"
 	echo "-r RATE		custom rate-limit packet replay to Kismet server (default 10k pps)"
 	echo ""
-	echo "This script requires the commands (part of X apt package in Kali): awk (mawk|gawk), curl, grep, jq, kismet (kismet-core), kismetdb_statistics (kismet-logtools), and pgrep (procps)"
+	echo "This script requires the commands (part of X apt package in Kali): curl, grep, jq, kismet (kismet-core), kismetdb_statistics (kismet-logtools), and pgrep (procps)"
 	exit 0
 }
 
@@ -179,7 +183,7 @@ echo -ne "\rPackets replayed: $packetsReplayed / $filePackets in ${elapsedTime}s
 echo ""
 
 #query kismet API for interesting data
-#consider also "kismet.device.base.key"
+#consider also "kismet.device.base.key" when I try for handshakes
 dataFile=$(mktemp -p /tmp kismetProcessor_XXXXXX)
 curl -s -o "${dataFile}" -H 'Content-Type: application/json' -X POST  \
 http://${username}:${password}@localhost:2501/devices/views/phydot11_accesspoints/devices.prettyjson \
@@ -190,40 +194,17 @@ echo "Device JSON data saved to $dataFile"
 outFile="${kismetFile##*/}_processed_$(date +%m%d%y%H%M%S).csv"
 echo '"Advertised SSID","MAC","Crypt","Channel","Min","Max"' > "$outFile"
 #extract and format relevant data from downloaded JSON
-jq '.[] | .["dot11.advertisedssid.ssid"],.["kismet.device.base.macaddr"],.["kismet.device.base.crypt"],.["dot11.advertisedssid.channel"],.["kismet.common.signal.min_signal"],.["kismet.common.signal.max_signal"]' "$dataFile" | \
-awk '
-{
-    lines[NR % 6] = $0
-    if (NR % 6 == 0) {
-        for (i = 1; i <= 6; i++) {
-            printf "%s%s", lines[i], (i < 6 ? "," : $0"\n")
-        }
-    }
-}
-' | sort -t',' -k1 >> "$outFile"
+jq -r '.[] | [.["dot11.advertisedssid.ssid"],.["kismet.device.base.macaddr"],.["kismet.device.base.crypt"],.["dot11.advertisedssid.channel"],"\(.["kismet.common.signal.min_signal"])","\(.["kismet.common.signal.max_signal"])"] | @csv' "$dataFile" | sort -t',' -k1 >> "$outFile"
 echo "Device data processed into $outFile"
 
 #stop the kismet server
-
-pid1=$(pgrep -nl "kismet$" | awk 'NR == 1 {print $1}')
-pid2=$(pgrep -nl "kismet_cap_kism" | awk 'NR == 1 {print $1}')
-kill "$pid1"
-kill "$pid2"
-
-timeout 5 pidwait "$pid1"
-sleep 1
-
-case $? in
-	0)
-		echo "Kismet server stopped; exiting"
-		exit 0
-		;;
-	1)
-		echo "Warning: Problem stopping kismet server; exiting with status 1" 1>&2
-		exit 1
-		;;
-	*)
-		echo "Warning: Problem stopping kismet server; exiting with status $?" 1>&2
-		exit "$?"
-		;;	
-esac
+pid1=$(pgrep -n "kismet$")
+pid2=$(pgrep -n "kismet_cap_kism")
+kill "$pid2" "$pid1"
+pidwait "$pid1" "$pid2"
+if [[ -d /proc/$pid2 ]];then
+        echo "Waiting for orphaned kismet_cap_kism, pid $pid2, end" 
+        while [[ -d /proc/$pid2 ]];do
+                sleep .25
+        done        
+fi
